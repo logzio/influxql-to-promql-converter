@@ -4,8 +4,8 @@ influxql-to-m3-dashboard-converter
 Overview
 ========
 
-This is our implementation of Grafana dashboard conversion tooling, which
-converts dashboards which use InfluxQL to M3 (subset) of PromQL. This is
+This is our implementation of Grafana® dashboard conversion tooling, which
+converts dashboards which use InfluxQL® to M3 (subset) of PromQL™. This is
 only offered as reference and is not recommended for usage by anyone as is.
 
 While we have used (slightly different variant of) it in production years,
@@ -35,3 +35,8 @@ better than this one does.
 
 To report any possible vulnerabilities or other serious issues please see
 our [security](SECURITY.md) policy.
+
+Trademarks
+==========
+InfluxQL® is a trademark owned by InfluxData, which is not affiliated with, and does not endorse, this product.
+All product and service names used in this page are for identification purposes only and do not imply endorsement.
