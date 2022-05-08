@@ -750,6 +750,7 @@ def transform_dashboards():
         new_filename = filename[:json_suffix_index] + "_promql" + filename[json_suffix_index:]
         new_file = open("dashboards/" + new_filename, "w")
         new_file.write(json.dumps(dashboard, indent=4, sort_keys=True))
+        new_file.close()
 
 
 if __name__ == '__main__':
