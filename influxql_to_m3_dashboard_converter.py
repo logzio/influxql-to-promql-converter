@@ -744,7 +744,7 @@ def transform_dashboards():
     import json
     converter = InfluxQLToM3DashboardConverter()
     for filename in os.listdir("dashboards"):
-        dashboard = json.load(open(filename))
+        dashboard = json.load(open("dashboards/" +filename))
         dashboard = converter.convert_dashboard(dashboard)
         json_suffix_index = filename.find(".json")
         new_filename = filename[:json_suffix_index] + "_promql" + filename[json_suffix_index:]
