@@ -14,7 +14,7 @@ properly instead of having (deeply nested) regexp based handling we do.
 
 Usage
 ========
-1. Fork the repository
+1. Clone the repository
 2. Place all the influxql dashboards in the "dashboards" folder.
 3. Run the script:
 
