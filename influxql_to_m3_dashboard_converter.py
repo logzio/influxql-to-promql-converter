@@ -746,7 +746,7 @@ class InfluxQLToM3DashboardConverter:
 def transform_dashboards():
     import json
     converter = InfluxQLToM3DashboardConverter()
-    for filename in os.listdir("dashboards"):
+    for filename in [file for file in os.listdir("dashboards") if file.endswith('.json')]:
         try:
             dashboard = json.load(open("dashboards/" + filename))
         except Exception as e:
