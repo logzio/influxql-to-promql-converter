@@ -112,9 +112,11 @@ class InfluxQLToM3DashboardConverter:
                 return fun
         return "avg"
 
-    def convert_alerts(self, alert: dict) -> None:
+    def convert_alerts(self, alert: dict,panel_title) -> None:
         if not self.alert_notifications_map or not self.alert_notifications_uid_map:
-            raise ValueError("No alert notification mapping defined")
+            del alert["notifications"]
+            LOG.warning(f"No alert notification mapping defined, deleting alert notifications array in panel: {panel_title}")
+            return
         alert["name"] = "{name} (M3)".format(name=alert["name"])
         notifications: List[dict] = []
         for notification in alert["notifications"]:
@@ -275,7 +277,7 @@ class InfluxQLToM3DashboardConverter:
             expr += inner_expr
             if over_time_aggregations:
                 expr += ") {modifications}".format(modifications=" ".join(modifications))
-            expressions.append(expr)
+            expressions.append(expr.replace("'", "'"))
         fills = group_by.fills if group_by else []
         return " or ".join(expressions), over_times, fills
 
@@ -351,7 +353,7 @@ class InfluxQLToM3DashboardConverter:
                     value = value.replace("\\", "\\\\")
                     # Need to escape single quotes
                     value = value.replace("'", "\\'")
-                    labels.add(f"{key}{operator}'{value}'")
+                    labels.add(f'{key}{operator}"{value}"')
             else:
                 # Non regex matches are of the form "field" = foobar or "field" = 'foo-bar'. Look for
                 # both forms separately. Field name may or may not be double quoted. If it isn't, it
@@ -371,7 +373,7 @@ class InfluxQLToM3DashboardConverter:
                     if key == field_name:
                         continue
                     value = _escape_backslashes(value)
-                    labels.add(f"{key}{operator}'{value}'")
+                    labels.add(f'{key}{operator}"{value}"')
                 # Non-quoted value variant is terminated either by whitespace or closing parenthesis
                 regex = r'(\w+?|"\S+?")\s*{}\s*([^\s\'~].*?)(?:\)|\s)'.format(operator)
                 for (key, value) in re.findall(regex, query):
@@ -379,7 +381,7 @@ class InfluxQLToM3DashboardConverter:
                     if key == field_name:
                         continue
                     value = _escape_backslashes(value)
-                    labels.add(f"{key}{operator}'{value}'")
+                    labels.add(f'{key}{operator}"{value}"')
 
         return query, ",".join(sorted(labels))
 
@@ -711,7 +713,7 @@ class InfluxQLToM3DashboardConverter:
                 if fills:
                     LOG.warning("Unsupported fills: %r", fills)
             if "alert" in panel:
-                self.convert_alerts(panel["alert"])
+                self.convert_alerts(panel["alert"],panel['title'])
         except ValueError as ex:
             panel.pop("targets", None)
             panel.pop("alert", None)
@@ -744,7 +746,7 @@ def transform_dashboards():
     import json
     converter = InfluxQLToM3DashboardConverter()
     for filename in os.listdir("dashboards"):
-        dashboard = json.load(open("dashboards/" +filename))
+        dashboard = json.load(open("dashboards/" + filename))
         dashboard = converter.convert_dashboard(dashboard)
         json_suffix_index = filename.find(".json")
         new_filename = filename[:json_suffix_index] + "_promql" + filename[json_suffix_index:]
