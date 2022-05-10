@@ -112,10 +112,11 @@ class InfluxQLToM3DashboardConverter:
                 return fun
         return "avg"
 
-    def convert_alerts(self, alert: dict,panel_title) -> None:
+    def convert_alerts(self, alert: dict, panel_title) -> None:
         if not self.alert_notifications_map or not self.alert_notifications_uid_map:
             del alert["notifications"]
-            LOG.warning(f"No alert notification mapping defined, deleting alert notifications array in panel: {panel_title}")
+            LOG.warning(
+                f"No alert notification mapping defined, deleting alert notifications array in panel: {panel_title}")
             return
         alert["name"] = "{name} (M3)".format(name=alert["name"])
         notifications: List[dict] = []
@@ -713,7 +714,7 @@ class InfluxQLToM3DashboardConverter:
                 if fills:
                     LOG.warning("Unsupported fills: %r", fills)
             if "alert" in panel:
-                self.convert_alerts(panel["alert"],panel['title'])
+                self.convert_alerts(panel["alert"], panel['title'])
         except ValueError as ex:
             panel.pop("targets", None)
             panel.pop("alert", None)
@@ -746,7 +747,11 @@ def transform_dashboards():
     import json
     converter = InfluxQLToM3DashboardConverter()
     for filename in os.listdir("dashboards"):
-        dashboard = json.load(open("dashboards/" + filename))
+        try:
+            dashboard = json.load(open("dashboards/" + filename))
+        except Exception as e:
+            LOG.error(f"Failed opening file: {filename}, error: {str(e)}")
+            continue
         dashboard = converter.convert_dashboard(dashboard)
         json_suffix_index = filename.find(".json")
         new_filename = filename[:json_suffix_index] + "_promql" + filename[json_suffix_index:]
