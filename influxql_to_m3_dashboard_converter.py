@@ -105,6 +105,7 @@ class InfluxQLToM3DashboardConverter:
         self.alert_notifications_map = alert_notifications_map
         self.alert_notifications_uid_map = alert_notifications_uid_map
         self.scrape_interval = scrape_interval
+        self.group_by_labels = None
 
     def get_metric_aggregation(self, metric_name):
         for metric_re, fun in METRIC_AGGREGATION_REGEXPS:
@@ -420,6 +421,7 @@ class InfluxQLToM3DashboardConverter:
         return modifications
 
     def get_group_by(self, query: str) -> Optional[GroupBy]:
+        self.group_by_labels = None
         fills = []
         group_by = []
         time_val = ""
@@ -444,6 +446,7 @@ class InfluxQLToM3DashboardConverter:
                         "$interval", "$__interval")
                     continue
                 group_by.append(group.replace(",", "").replace('"', ""))
+        self.group_by_labels = group_by
         group_by_str = " by ({})".format(",".join(group_by)) if group_by else ""
         return GroupBy(group_by=group_by_str, over_time=time_val, fills=fills)
 
@@ -662,14 +665,22 @@ class InfluxQLToM3DashboardConverter:
             new_overrides.append(override)
         return new_overrides
 
+    def get_legend_format(self, target: dict) -> str:
+        legend = re.sub(r"(\[\[|\$)tag_([a-zA-Z_]+)(\]\]|)", r"{{ \2 }}", target.get("alias", ""))
+        # We don't support percentile, if legend says something is percentile convert that to Mean instead
+        legend = re.sub(r"\d+\w+\spercentile", "Mean", legend)
+        if legend == "" and self.group_by_labels:
+            legend_list = ["{{" + label + "}}" for label in self.group_by_labels]
+            legend = " ".join(legend_list)
+
+        return legend
+
     def convert_targets(self, targets: List[dict]) -> Tuple[List[dict], List[str], List[str]]:
         new_targets = []
         r_over_times = []
         r_fills = []
         for target in targets:
-            legend = re.sub(r"(\[\[|\$)tag_([a-zA-Z_]+)(\]\]|)", r"{{ \2 }}", target.get("alias", ""))
-            # We don't support percentile, if legend says something is percentile convert that to Mean instead
-            legend = re.sub(r"\d+\w+\spercentile", "Mean", legend)
+            legend = self.get_legend_format(target)
             if target.get("rawQuery"):  # Some panels use raw query instead
                 query = target["query"].replace("\n", " ")
                 query = re.sub("  +", " ", query)
