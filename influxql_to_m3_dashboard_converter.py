@@ -1,4 +1,5 @@
 # Copyright (c) 2019 Aiven, Helsinki, Finland. https://aiven.io/
+import os
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple, Union
 
 import logging
@@ -10,12 +11,14 @@ SCRAPE_INTERVAL_SECONDS = 30
 OVER_TIME_AGGREGATIONS = ["avg", "min", "max", "sum", "quantile", "stddev", "stdvar", "count"]
 LABEL_COMPARISON_OPERATORS = ["=", "!=", "=~", "!~"]
 LABEL_CONDITIONS_OPERATORS = ["<", ">", "<=", ">=", "="]
+TIME_INTERVAL_REGEX = "[0-9]+[mhdwy][s]?"  # Match time(<<interval>>)
 
 AGGREGATION_MAP = {
     "count": "count",
     "max": "max",
     "min": "min",
-    "median": "avg",  # Prometheus does not have a median function. It can do quantile(0,5...) on histograms only
+    "median": "avg",
+    # Prometheus does not have a median function. It can do quantile(0,5...) on histograms only
     "mean": "avg",
     "non_negative_derivative": "rate",
     "non_negative_difference": "increase",
@@ -26,6 +29,11 @@ AGGREGATION_MAP = {
     # expected time based grouping so use average instead as an approximation
     # last_over_time is supported in Prometheus 2.25+ but not in M3 1.1 (at least)
     "last": "avg",
+
+    # moving_average translated to avg_over_time
+    "moving_average": "avg",
+    "derivative": "rate",
+    "difference": "delta"
 }
 
 # convert count(x) to sum(count_over_time(x[interval/__range]))
@@ -86,17 +94,18 @@ class ConvertError(Exception):
 
 class InfluxQLToM3DashboardConverter:
     def __init__(
-        self,
-        *,
-        datasource_map: Optional[Dict[Any, str]] = None,
-        alert_notifications_map: Optional[Dict[int, str]] = None,
-        alert_notifications_uid_map: Optional[Dict[str, str]] = None,
-        scrape_interval: int = SCRAPE_INTERVAL_SECONDS,
+            self,
+            *,
+            datasource_map: Optional[Dict[Any, str]] = None,
+            alert_notifications_map: Optional[Dict[int, str]] = None,
+            alert_notifications_uid_map: Optional[Dict[str, str]] = None,
+            scrape_interval: int = SCRAPE_INTERVAL_SECONDS,
     ) -> None:
         self.datasource_map = datasource_map
         self.alert_notifications_map = alert_notifications_map
         self.alert_notifications_uid_map = alert_notifications_uid_map
         self.scrape_interval = scrape_interval
+        self.group_by_labels = None
 
     def get_metric_aggregation(self, metric_name):
         for metric_re, fun in METRIC_AGGREGATION_REGEXPS:
@@ -104,9 +113,12 @@ class InfluxQLToM3DashboardConverter:
                 return fun
         return "avg"
 
-    def convert_alerts(self, alert: dict) -> None:
+    def convert_alerts(self, alert: dict, panel_title) -> None:
         if not self.alert_notifications_map or not self.alert_notifications_uid_map:
-            raise ValueError("No alert notification mapping defined")
+            del alert["notifications"]
+            LOG.warning(
+                f"No alert notification mapping defined, deleting alert notifications array in panel: {panel_title}")
+            return
         alert["name"] = "{name} (M3)".format(name=alert["name"])
         notifications: List[dict] = []
         for notification in alert["notifications"]:
@@ -139,37 +151,45 @@ class InfluxQLToM3DashboardConverter:
                 pattern = r"show tag values from (?P<tag>.+?) with key = ['|\"](?P<key>.+?)['|\"]( where service_type\s?=\s?['|\"](?P<service_type>.+?)['|\"] and time > now\(\) - (?P<interval>.+?$))?"
                 m = re.search(pattern, query)
                 if m is None:
+                    pattern = r"SHOW TAG VALUES FROM (?P<tag>.+?) WITH KEY = ['|\"](?P<key>.+?)['|\"]"
+                    m = re.search(pattern, query)
+                if m is None:
+                    # check dashboard for alternative definition
+                    pattern = r"SHOW TAG VALUES WITH KEY = ['|\"](?P<key>.+?)['|\"]"
+                    m = re.search(pattern, query)
+                if m is None:
                     raise ValueError(f"Unable to find tag values or key from {query!r}")
 
                 groupdict = m.groupdict()
-                metric = groupdict["tag"]
+                metric = groupdict.get("tag")
                 key = groupdict["key"]
                 service_type = groupdict.get("service_type")
                 interval = groupdict.get("interval")
-
-                if key in ("host", "service_id") and service_type and interval:
+                if key in ("host", "service_id") and service_type and interval and metric:
                     new_query = (
                         f'query_result(avg by({key})(avg_over_time({metric}{{service_type="{service_type}"}}[{interval}])))'
                     )
                     item["regex"] = f'/{key}="(.*?)"/'
-                else:
+                elif metric:
                     new_query = f"label_values({metric},{key})"
+                else:
+                    new_query = f"label_values({key})"
                 item["query"] = new_query.replace("cpu", "cpu_usage_idle")
-            elif item["type"] in {"custom", "interval"}:
+            elif item["type"] in {"custom", "interval", "datasource"}:
                 pass
             else:
                 raise ValueError(f"Unknown template type for item {item}")
 
     def format_expression(
-        self,
-        *,
-        divide_by_self: bool,
-        metric_name: str,
-        aggregations: List[str],
-        labels: str,
-        group_by: Optional[GroupBy],
-        modifications: List[str],
-        conditions,
+            self,
+            *,
+            divide_by_self: bool,
+            metric_name: str,
+            aggregations: List[str],
+            labels: str,
+            group_by: Optional[GroupBy],
+            modifications: List[str],
+            conditions,
     ) -> Tuple[str, List[str], List[str]]:
         if not isinstance(conditions, list):
             conditions = [conditions]
@@ -211,10 +231,11 @@ class InfluxQLToM3DashboardConverter:
                     aggregation = self.get_metric_aggregation(metric_name)
                     if not over_time:
                         over_time = "$__rate_interval"
-                if group_by and group_by.group_by:
+                if group_by and (group_by.group_by or over_time_aggregations):
                     if not condition:  # count works better than sum if count_over_time is omitted
                         aggregation = AGGREGATION_TOPLEVEL_MAP.get(aggregation, aggregation)
-                    expr += "{}{}".format(aggregation, group_by.group_by)
+                    if not over_time:  # discard aggregation from group by when over time function is used
+                        expr += "{}{}".format(aggregation, group_by.group_by)
                 else:
                     expr += aggregation
             if condition and set(aggregations).difference({"avg", "max", "min"}):
@@ -245,7 +266,9 @@ class InfluxQLToM3DashboardConverter:
                 else:
                     over_times.append(_seconds_to_duration(scrape_interval))
                 if over_time_aggregations:
-                    inner_expr += f"[{over_time}]"
+                    # replace time frame i.e 5m, 1h etc with $__interval
+                    interval_replace = re.sub(TIME_INTERVAL_REGEX, "$__interval", over_time)
+                    inner_expr += f"[{interval_replace}]"
                 over_times.append(over_time)
             if over_time_aggregations:
                 inner_expr += f"){condition}"
@@ -256,7 +279,7 @@ class InfluxQLToM3DashboardConverter:
             expr += inner_expr
             if over_time_aggregations:
                 expr += ") {modifications}".format(modifications=" ".join(modifications))
-            expressions.append(expr)
+            expressions.append(expr.replace("'", "'"))
         fills = group_by.fills if group_by else []
         return " or ".join(expressions), over_times, fills
 
@@ -332,7 +355,7 @@ class InfluxQLToM3DashboardConverter:
                     value = value.replace("\\", "\\\\")
                     # Need to escape single quotes
                     value = value.replace("'", "\\'")
-                    labels.add(f"{key}{operator}'{value}'")
+                    labels.add(f'{key}{operator}"{value}"')
             else:
                 # Non regex matches are of the form "field" = foobar or "field" = 'foo-bar'. Look for
                 # both forms separately. Field name may or may not be double quoted. If it isn't, it
@@ -352,7 +375,7 @@ class InfluxQLToM3DashboardConverter:
                     if key == field_name:
                         continue
                     value = _escape_backslashes(value)
-                    labels.add(f"{key}{operator}'{value}'")
+                    labels.add(f'{key}{operator}"{value}"')
                 # Non-quoted value variant is terminated either by whitespace or closing parenthesis
                 regex = r'(\w+?|"\S+?")\s*{}\s*([^\s\'~].*?)(?:\)|\s)'.format(operator)
                 for (key, value) in re.findall(regex, query):
@@ -360,7 +383,7 @@ class InfluxQLToM3DashboardConverter:
                     if key == field_name:
                         continue
                     value = _escape_backslashes(value)
-                    labels.add(f"{key}{operator}'{value}'")
+                    labels.add(f'{key}{operator}"{value}"')
 
         return query, ",".join(sorted(labels))
 
@@ -398,6 +421,7 @@ class InfluxQLToM3DashboardConverter:
         return modifications
 
     def get_group_by(self, query: str) -> Optional[GroupBy]:
+        self.group_by_labels = None
         fills = []
         group_by = []
         time_val = ""
@@ -418,9 +442,11 @@ class InfluxQLToM3DashboardConverter:
                     m = re.search("\\((.*)\\)", group)
                     if m is None:
                         raise ValueError(f"Unparseable group by statement: {group}")
-                    time_val = m.group(1).replace("$interval", "$__interval").replace("auto", "$__interval")
+                    time_val = m.group(1).replace("$_interval", "$__interval").replace("auto", "$__interval").replace(
+                        "$interval", "$__interval")
                     continue
                 group_by.append(group.replace(",", "").replace('"', ""))
+        self.group_by_labels = group_by
         group_by_str = " by ({})".format(",".join(group_by)) if group_by else ""
         return GroupBy(group_by=group_by_str, over_time=time_val, fills=fills)
 
@@ -568,7 +594,9 @@ class InfluxQLToM3DashboardConverter:
                         param_str = ", {}".format(item["params"][0])
                     if select_what:
                         select_what = f"{item_type}({select_what}{param_str})"
-                    else:
+                    elif item_type not in ('max', 'last'):
+                        # else:
+                        # Condition to filter unnecessary aggregation in m3
                         select_what = f'{item_type}("{value}"{param_str})'
                 elif item_type == "alias":
                     # This is only used in the Maps dashboard. This is actually relevant but the map itself is
@@ -599,7 +627,8 @@ class InfluxQLToM3DashboardConverter:
                 # Our query parsing doesn't handle <> correctly, use != instead
                 if operator == "<>":
                     operator = "!="
-                where_items.append('"{key}"{operator}{value}'.format(key=tag["key"], operator=operator, value=tag["value"]))
+                where_items.append(
+                    '"{key}"{operator}{value}'.format(key=tag["key"], operator=operator, value=tag["value"]))
         where = "({})".format(" AND ".join(where_items))
 
         group_by_items = []
@@ -636,14 +665,22 @@ class InfluxQLToM3DashboardConverter:
             new_overrides.append(override)
         return new_overrides
 
+    def get_legend_format(self, target: dict) -> str:
+        legend = re.sub(r"(\[\[|\$)tag_([a-zA-Z_]+)(\]\]|)", r"{{ \2 }}", target.get("alias", ""))
+        # We don't support percentile, if legend says something is percentile convert that to Mean instead
+        legend = re.sub(r"\d+\w+\spercentile", "Mean", legend)
+        if legend == "" and self.group_by_labels:
+            legend_list = ["{{" + label + "}}" for label in self.group_by_labels]
+            legend = " ".join(legend_list)
+
+        return legend
+
     def convert_targets(self, targets: List[dict]) -> Tuple[List[dict], List[str], List[str]]:
         new_targets = []
         r_over_times = []
         r_fills = []
         for target in targets:
-            legend = re.sub(r"(\[\[|\$)tag_([a-zA-Z_]+)(\]\]|)", r"{{ \2 }}", target.get("alias", ""))
-            # We don't support percentile, if legend says something is percentile convert that to Mean instead
-            legend = re.sub(r"\d+\w+\spercentile", "Mean", legend)
+            legend = self.get_legend_format(target)
             if target.get("rawQuery"):  # Some panels use raw query instead
                 query = target["query"].replace("\n", " ")
                 query = re.sub("  +", " ", query)
@@ -672,6 +709,7 @@ class InfluxQLToM3DashboardConverter:
                 panel["targets"] = targets
                 over_times = set(over_times_list)
                 # Assume $__interval and $__rate_interval are covered by scraping interval
+                over_times.discard("$interval")
                 over_times.discard("$__interval")
                 over_times.discard("$__rate_interval")
                 if len(over_times) > 0 and not panel.get("interval", None) and "$__range" not in over_times:
@@ -687,7 +725,7 @@ class InfluxQLToM3DashboardConverter:
                 if fills:
                     LOG.warning("Unsupported fills: %r", fills)
             if "alert" in panel:
-                self.convert_alerts(panel["alert"])
+                self.convert_alerts(panel["alert"], panel['title'])
         except ValueError as ex:
             panel.pop("targets", None)
             panel.pop("alert", None)
@@ -716,12 +754,22 @@ class InfluxQLToM3DashboardConverter:
 # This is built-in example, not what we use for real (and alerting
 # conversion needs alert_* parameters to the converter)
 
-if __name__ == '__main__':
-    import sys
+def transform_dashboards():
     import json
-
     converter = InfluxQLToM3DashboardConverter()
-    filename = sys.argv[1] # one file argument = what to convert
-    dashboard = json.load(open(filename))
-    dashboard = converter.convert_dashboard(dashboard)
-    print(json.dumps(dashboard, indent=4))
+    for filename in [file for file in os.listdir("dashboards") if file.endswith('.json')]:
+        try:
+            dashboard = json.load(open("dashboards/" + filename))
+        except Exception as e:
+            LOG.error(f"Failed opening file: {filename}, error: {str(e)}")
+            continue
+        dashboard = converter.convert_dashboard(dashboard)
+        json_suffix_index = filename.find(".json")
+        new_filename = filename[:json_suffix_index] + "_promql" + filename[json_suffix_index:]
+        new_file = open("dashboards/" + new_filename, "w")
+        new_file.write(json.dumps(dashboard, indent=4, sort_keys=True))
+        new_file.close()
+
+
+if __name__ == '__main__':
+    transform_dashboards()

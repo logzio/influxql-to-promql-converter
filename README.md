@@ -14,10 +14,15 @@ properly instead of having (deeply nested) regexp based handling we do.
 
 Usage
 ========
+1. Clone the repository
+2. Place all the influxql dashboards in the "dashboards" folder.
+3. Run the script:
 
 ```
-# python3 influxql_to_m3_dashboard_converter.py influxdash.json > m3dash.json
+# python3 influxql_to_m3_dashboard_converter.py
 ```
+
+Each parsed file will have the same name with a "_promql" suffix.
 
 License
 ============
