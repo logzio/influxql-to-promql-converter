@@ -1,5 +1,4 @@
 # Copyright (c) 2019 Aiven, Helsinki, Finland. https://aiven.io/
-import os
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple, Union
 
 import logging
@@ -100,12 +99,40 @@ class InfluxQLToM3DashboardConverter:
             alert_notifications_map: Optional[Dict[int, str]] = None,
             alert_notifications_uid_map: Optional[Dict[str, str]] = None,
             scrape_interval: int = SCRAPE_INTERVAL_SECONDS,
+            replacement_datasource: str = None,
+            log_level=logging.INFO
     ) -> None:
+        logging.getLogger(__name__).setLevel(level=log_level)
+
         self.datasource_map = datasource_map
         self.alert_notifications_map = alert_notifications_map
         self.alert_notifications_uid_map = alert_notifications_uid_map
         self.scrape_interval = scrape_interval
         self.group_by_labels = None
+        self.metric_to_objects = {}  # dict of: metric -> {panel,dashboard title} to avoid iterating over all panels
+        self.current_dashboard = ''
+        self.replacement_datasource = replacement_datasource
+
+    def get_metric_field_from_select(self, select):
+        field = None
+        for item in select[0]:
+            if item['type'] == 'field':
+                field = item['params'][0]
+                break
+        return field
+
+    def add_to_metric_and_object_list(self, old_targets, new_targets):
+        for i, old_target in enumerate(old_targets):
+            metric_name = old_target['measurement'] + "_"
+            # replace . with _ is a specific use case for customized metric names with . instead of _
+            metric_name += self.get_metric_field_from_select(old_target['select']).replace(".", "_")
+            try:
+                self.metric_to_objects[metric_name][self.current_dashboard].append(new_targets[i])
+            except KeyError:
+                if not self.metric_to_objects.get(metric_name):
+                    self.metric_to_objects[metric_name] = {}
+                self.metric_to_objects[metric_name][self.current_dashboard] = []
+            self.metric_to_objects[metric_name][self.current_dashboard].append(new_targets[i])
 
     def get_metric_aggregation(self, metric_name):
         for metric_re, fun in METRIC_AGGREGATION_REGEXPS:
@@ -138,9 +165,12 @@ class InfluxQLToM3DashboardConverter:
         alert["notifications"] = notifications
 
     def convert_templating(self, template: dict) -> None:
+
         for item in template["list"]:
             if item["type"] == "query":
-                if self.datasource_map:
+                if self.replacement_datasource:
+                    item['datasource'] = self.replacement_datasource
+                elif self.datasource_map:
                     datasource = item["datasource"]
                     # Recent grafana -> hope it is ok
                     if isinstance(datasource, dict):
@@ -148,14 +178,17 @@ class InfluxQLToM3DashboardConverter:
                     item["datasource"] = self.datasource_map.get(datasource, datasource)
                 item["sort"] = 3  # Numerical(asc)
                 query = item["query"]
+                # Uncommon case where they query is a dict
+                if isinstance(query, dict) and query.get('query'):
+                    query = query['query']
                 pattern = r"show tag values from (?P<tag>.+?) with key = ['|\"](?P<key>.+?)['|\"]( where service_type\s?=\s?['|\"](?P<service_type>.+?)['|\"] and time > now\(\) - (?P<interval>.+?$))?"
                 m = re.search(pattern, query)
                 if m is None:
-                    pattern = r"SHOW TAG VALUES FROM (?P<tag>.+?) WITH KEY = ['|\"](?P<key>.+?)['|\"]"
+                    pattern = r"SHOW TAG VALUES FROM ['|\"]?(?P<tag>.+?)['|\"]? WITH KEY = ['|\"](?P<key>.+?)['|\"]"
                     m = re.search(pattern, query)
                 if m is None:
                     # check dashboard for alternative definition
-                    pattern = r"SHOW TAG VALUES WITH KEY = ['|\"](?P<key>.+?)['|\"]"
+                    pattern = r"SHOW TAG VALUES WITH KEY\s?=\s?['|\"](?P<key>.*?)['|\"]"
                     m = re.search(pattern, query)
                 if m is None:
                     raise ValueError(f"Unable to find tag values or key from {query!r}")
@@ -287,7 +320,8 @@ class InfluxQLToM3DashboardConverter:
         part1 = re.search(r'from "(\S+)" where', query, re.IGNORECASE)
         if part1 is None:
             raise ValueError(f"Unable to find metric name in {query}")
-        part2 = re.search(r'(\("|\(|\")(\w+)("\)|\)|")', query, re.IGNORECASE)
+        # Added |. after word selection for specific dashboard with a . in the metric name
+        part2 = re.search(r'(\("|\(|\")([\w.]+)("\)|\)|")', query, re.IGNORECASE)
         if part2 is None:
             raise ValueError(f"Unable to find (single) metric key in {query}")
         return part1.group(1), part2.group(1) if part2.group(1) not in {'"', "(", '("'} else part2.group(2)
@@ -452,6 +486,8 @@ class InfluxQLToM3DashboardConverter:
 
     def convert_expression(self, query: str) -> Tuple[str, List[str], List[str]]:
         series_name, field_name = self.get_metric_name(query)
+        field_name = field_name.replace(".", "_")  # Specific use case for metric names with . as a seperator
+        field_name = field_name.replace(".", "_")  # Specific use case for metric names with . as a seperator
         metric_name = "{}_{}".format(series_name, field_name)
         aggregations = self.get_aggregations(query)
         if aggregations == ["avg"]:
@@ -464,7 +500,7 @@ class InfluxQLToM3DashboardConverter:
             # We need to have *some* aggregation to group by
             aggregations = [self.get_metric_aggregation(metric_name)]
             if aggregations == ["avg"]:
-                LOG.info("Using default aggregation of avg for %r", query)
+                LOG.debug("Using default aggregation of avg for %r", query)
         conditions = self.get_conditions(query, field_name=field_name)
         divide_by_self = self.does_divide_by_self(query)
         if divide_by_self and (conditions or modifications):
@@ -568,10 +604,11 @@ class InfluxQLToM3DashboardConverter:
             "expr": expr,
             "format": fmt,
             "instant": fmt == "table",
-            "intervalFactor": 1,  # TODO: What is this?
+            "intervalFactor": 1,
             "refId": target["refId"],
             "legendFormat": legend,
         }
+
         if "hide" in target:
             new_target["hide"] = target["hide"]
         return new_target, over_times, fills
@@ -581,6 +618,9 @@ class InfluxQLToM3DashboardConverter:
         value = ""
         select_what = ""
         modifications: List[str] = []
+        if target.get('select') is None:
+            raise ValueError(f'Dashboard {self.current_dashboard} is invalid, missing select field in target')
+
         for select in target["select"]:
             for item in select:
                 item_type = item["type"]
@@ -601,9 +641,9 @@ class InfluxQLToM3DashboardConverter:
                 elif item_type == "alias":
                     # This is only used in the Maps dashboard. This is actually relevant but the map itself is
                     # of questionable value so just ignore the issue for now
-                    LOG.info("Dropping unsupported alias: %r", item)
+                    LOG.debug("Dropping unsupported alias: %r", item)
                 elif item_type == "distinct":
-                    LOG.info("Dropping unsupported item type: distinct")
+                    LOG.debug("Dropping unsupported item type: distinct")
                 else:
                     raise ValueError(f"Unknown item type {item_type!r} in {target!r}")
 
@@ -645,6 +685,9 @@ class InfluxQLToM3DashboardConverter:
                 raise ValueError(f"Unknown group type {group_type} in {target}")
 
         group_by = " GROUP BY {}".format(",".join(group_by_items)) if group_by_items else ""
+        if not target.get('measurement'):
+            raise ValueError(f'Missing measurement field for target, in dashboard: {self.current_dashboard}')
+
         query += '{select_what}{modifications} FROM "{measurement}" WHERE {where}{group_by}'.format(
             select_what=select_what,
             modifications=" ".join(modifications),
@@ -698,7 +741,9 @@ class InfluxQLToM3DashboardConverter:
             # instead under 'panels' list of the 'row'
             self.convert_panels(panel.get("panels", []))
             return
-        if self.datasource_map:
+        if self.replacement_datasource:
+            panel["datasource"] = self.replacement_datasource
+        elif self.datasource_map:
             datasource = panel.get("datasource")
             if datasource and (isinstance(datasource, dict) or datasource not in self.datasource_map):
                 return
@@ -706,9 +751,11 @@ class InfluxQLToM3DashboardConverter:
         try:
             if "targets" in panel:
                 targets, over_times_list, fills_list = self.convert_targets(panel["targets"])
+                self.add_to_metric_and_object_list(panel['targets'], targets)
                 panel["targets"] = targets
                 over_times = set(over_times_list)
                 # Assume $__interval and $__rate_interval are covered by scraping interval
+                over_times.discard("$tinterval", )
                 over_times.discard("$interval")
                 over_times.discard("$__interval")
                 over_times.discard("$__rate_interval")
@@ -738,38 +785,17 @@ class InfluxQLToM3DashboardConverter:
             self.convert_panel(panel)
 
     def convert_dashboard(self, dashboard: dict) -> dict:
+        LOG.info(f'Started dashboard conversion for: {dashboard.get("title")}')
+        self.current_dashboard = dashboard.get("title")
         templating = dashboard.get("templating")
         try:
             if templating:
                 self.convert_templating(dashboard["templating"])
         except ValueError as ex:
-            raise ConvertError from ex
+            raise ConvertError(ex) from ex
         self.convert_panels(dashboard.get("panels", []))
         for row in dashboard.get("rows", []):
             # TBD does this even exist? modern Grafana seems to have just toplevel list of "panels"
             self.convert_panels(row["panels"])
+        LOG.info(f'Finished dashboard conversion for: {dashboard.get("title")}')
         return dashboard
-
-
-# This is built-in example, not what we use for real (and alerting
-# conversion needs alert_* parameters to the converter)
-
-def transform_dashboards():
-    import json
-    converter = InfluxQLToM3DashboardConverter()
-    for filename in [file for file in os.listdir("dashboards") if file.endswith('.json')]:
-        try:
-            dashboard = json.load(open("dashboards/" + filename))
-        except Exception as e:
-            LOG.error(f"Failed opening file: {filename}, error: {str(e)}")
-            continue
-        dashboard = converter.convert_dashboard(dashboard)
-        json_suffix_index = filename.find(".json")
-        new_filename = filename[:json_suffix_index] + "_promql" + filename[json_suffix_index:]
-        new_file = open("dashboards/" + new_filename, "w")
-        new_file.write(json.dumps(dashboard, indent=4, sort_keys=True))
-        new_file.close()
-
-
-if __name__ == '__main__':
-    transform_dashboards()

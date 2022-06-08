@@ -1,0 +1,29 @@
+
+datasource:
+input:
+  grafana:
+    endpoint:
+    api_token:
+  folder:
+    path:
+processor:
+  replace_metrics_names:
+    - name:
+      value:
+  find_metrics_names:
+    metrics_db_endpoint:
+    metrics_db_header:
+      key:
+      value:
+    replace_strategy:
+      strategies: [ 'statistic_combination' , 'permutation' ]
+      min_match_percent:  # min percent for combination result match
+      min_filter_percent:  # begin matching combinations only if initial match percent is above this value
+exporter:
+  grafana:
+    endpoint:
+    auth_header:
+      key:
+      value:
+  folder:
+    path:
