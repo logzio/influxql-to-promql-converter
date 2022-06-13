@@ -4,13 +4,12 @@ influxql-to-m3-dashboard-converter
 Overview
 ========
 
-This is our implementation of Grafana® dashboard conversion tooling, which
-converts dashboards which use InfluxQL® to M3 (subset) of PromQL™. This is
-only offered as reference and is not recommended for usage by anyone as is.
+A tool to migrate Grafana dashboards based on InfluxDB source to Prometheus source ( like Prometheus, M3DB, Cortex ... )
+The tool has 2 main engines:
+1. Translate query language from InfluxQL to PromQL
+2. Search and replace metrics names
 
-While we have used (slightly different variant of) it in production years,
-and still do, correct way of handling this would be to parse InfluxQL
-properly instead of having (deeply nested) regexp based handling we do.
+This tool is based on a work done by [Markus Stenberg](https://github.com/fingon) and [Rauli Ikonen](https://github.com/rikonen) from [Aiven](https://aiven.io)
 
 Usage
 ========
