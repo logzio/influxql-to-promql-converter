@@ -5,6 +5,7 @@ Overview
 ========
 
 A tool to migrate Grafana dashboards based on InfluxDB source to Prometheus source ( like Prometheus, M3DB, Cortex ... )
+
 The tool has 2 main engines:
 1. Translate query language from InfluxQL to PromQL
 2. Search and replace metrics names
