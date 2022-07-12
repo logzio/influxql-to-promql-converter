@@ -59,5 +59,5 @@ class GrafanaExporter(Exporter):
         if response.status_code != 200:
             self._logger.error(f"Error creating dashboards folder: {response.content}")
         else:
-            self._logger.debug(f"Successfully created migration folder with name: {folder_name}")
+            self._logger.debug(f"Successfully created migration folder in grafana, with name: {folder_name}")
         return folder_uid

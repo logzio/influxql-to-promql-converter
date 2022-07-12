@@ -7,7 +7,7 @@ This exporter export dashboards to a local folder.
 
 **Example config**:
 ```
-importer:
+exporter:
   folder:
     path:  /promql/dashboards
 ```

@@ -66,8 +66,6 @@ class FindMetricsNamesProcessor(Processor):
             metric_to_objects = updated_sent_metrics_and_objects[1]
         # Remove duplicated metrics and sort - required for permutation method
         all_dashboards_metrics = list(metric_to_objects.keys())
-        all_dashboards_metrics.sort()
-        all_sent_metrics.sort()
         for strategy in self._replace_strategies:
             if len(all_sent_metrics) > 0:
                 process_method = getattr(self, strategy + '_replace')
@@ -80,31 +78,26 @@ class FindMetricsNamesProcessor(Processor):
         return metric_to_objects
 
     # Metric sent contains the same characters as the metric in the dashboard, but in a different order
+    # Metric sent contains the same characters as the metric in the dashboard, but in a different order
     def permutation_replace(self, sent_metrics, current_dashboards_metrics, metric_to_objects) -> (list, list):
-        j = 0
-        i = 0
         filtered_metric_to_objects = copy.deepcopy(metric_to_objects)
+        filtered_dashboard_metrics = copy.deepcopy(current_dashboards_metrics)
         filtered_sent_metrics = sent_metrics.copy()
-        while i < len(sent_metrics) and j < len(current_dashboards_metrics):
-            if len(sent_metrics[i]) == len(current_dashboards_metrics[j]):  # chance for permutation
-                if Counter(sent_metrics[i]) == Counter(current_dashboards_metrics[j]):  # Permutation
-                    if not filtered_metric_to_objects.get(current_dashboards_metrics[j]):
-                        i += 1
-                        j += 1
-                        continue
-                    self.replace_metric(current_dashboards_metrics[j], sent_metrics[i],
-                                        filtered_metric_to_objects[current_dashboards_metrics[j]])
-                    self.add_to_report(metric_to_objects[current_dashboards_metrics[j]], __name__,
-                                       self.create_report_object(
-                                           current_dashboards_metrics[j], sent_metrics[i])
-                                       )
-                    filtered_sent_metrics.remove(sent_metrics)
-                    i += 1
-                    j += 1
-            if sent_metrics[i] < current_dashboards_metrics[j]:
-                i += 1
-            elif current_dashboards_metrics[j] < sent_metrics[i]:
-                j += 1
+
+        for dashboard_metric in current_dashboards_metrics:
+            for sent_metric in sent_metrics:
+                if len(sent_metric) == len(dashboard_metric):
+                    if Counter(sent_metric) == Counter(dashboard_metric):
+                        self.replace_metric(dashboard_metric, sent_metric,
+                                            filtered_metric_to_objects[dashboard_metric])
+                        for dashboard in metric_to_objects[dashboard_metric].keys():
+                            self.add_to_report(dashboard, __name__,
+                                               self.create_report_object(
+                                                   dashboard_metric, sent_metric)
+                                               )
+                        filtered_sent_metrics.remove(sent_metric)
+                        filtered_dashboard_metrics.remove(dashboard_metric)
+        current_dashboards_metrics = filtered_dashboard_metrics
         return filtered_sent_metrics, filtered_metric_to_objects
 
     def statistic_combination_replace(self, all_sent_metrics, all_dashboards_metrics, metric_to_objects) -> (

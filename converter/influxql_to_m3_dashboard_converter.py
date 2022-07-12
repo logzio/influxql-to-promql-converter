@@ -487,7 +487,6 @@ class InfluxQLToM3DashboardConverter:
     def convert_expression(self, query: str) -> Tuple[str, List[str], List[str]]:
         series_name, field_name = self.get_metric_name(query)
         field_name = field_name.replace(".", "_")  # Specific use case for metric names with . as a seperator
-        field_name = field_name.replace(".", "_")  # Specific use case for metric names with . as a seperator
         metric_name = "{}_{}".format(series_name, field_name)
         aggregations = self.get_aggregations(query)
         if aggregations == ["avg"]:

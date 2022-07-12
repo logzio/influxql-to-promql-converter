@@ -143,3 +143,13 @@ Trademarks
 ==========
 InfluxQL® is a trademark owned by InfluxData, which is not affiliated with, and does not endorse, this product.
 All product and service names used in this page are for identification purposes only and do not imply endorsement.
+
+Changelog
+==========
+
+v0.0.2:
+* Fixed a bug in find metrics names processor (permutation replace strategy).
+* Fixed a mistake in readme.
+
+v0.0.1:
+* Initial release
