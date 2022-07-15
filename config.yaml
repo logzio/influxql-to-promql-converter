@@ -1,6 +1,6 @@
 
 datasource:
-input:
+importer:
   grafana:
     endpoint:
     api_token:

@@ -15,8 +15,9 @@ This tool is based on a work done by [Markus Stenberg](https://github.com/fingon
 Usage
 ========
 1. Clone the repository
-2. Edit the configuration file with your settings (see below for example)
-3. Run the script:
+2. Navigate to the project folder and install the requirements: ```pip install -r requirements.txt```
+3. Edit the configuration file with your settings (see below for example)
+4. Run the script:
 
 ```
 # python3 main.py
