@@ -26,11 +26,35 @@ class FindMetricsNamesProcessor(Processor):
 
     def __init__(self, params: dict, log_level=logging.INFO):
         super().__init__(__name__, log_level)
-        self._metrics_db_endpoint = params['metrics_db_endpoint']
-        self._metrics_db_header = {params['metrics_db_header']['key']: params['metrics_db_header']['value']}
+        self._metrics_db_endpoint = params['metrics_auth']['metrics_db_endpoint']
         self._replace_strategies = self.order_repalce_strategies(params['replace_strategy']['strategies'])
         self._statistic_replace_min_match_percent = params['replace_strategy'].get('min_match_percent')
         self._statistic_replace_min_filter_percent = params['replace_strategy'].get('min_filter_percent')
+        self._get_metrics_auth(params)
+
+    def _get_metrics_auth(self, params: dict):
+        self._metrics_oauth_header = None
+        self._metrics_basic_auth_username = None
+        self._metrics_basic_auth_password = None
+        try:
+            metrics_auth = params['metrics_auth']
+            oauth_header = metrics_auth.get('metrics_oauth_header')
+            basic_auth = metrics_auth.get('metrics_basic_auth')
+            if oauth_header:
+                self._metrics_oauth_header = {
+                    oauth_header['key']: params['metrics_auth']['metrics_oauth_header'][
+                        'value']}
+            elif basic_auth:
+                self._metrics_basic_auth_username = basic_auth['username']
+                self._metrics_basic_auth_password = basic_auth['password']
+        except KeyError:
+            self._logger.error("Invalid metrics auth config, trying to fetch metrics without authentication")
+            return
+
+        if not oauth_header and not basic_auth:
+            self._logger.warning(
+                "Could not find metrics authentication credentials in the config file, trying to fetch metrics "
+                "without authentication")
 
     def group_tuples_by_service(self, metric_to_objects) -> dict:
         service_to_metrics = {}
@@ -43,17 +67,16 @@ class FindMetricsNamesProcessor(Processor):
         return service_to_metrics
 
     def drop_matching_metrics(self, sent_metrics_for_service, metric_to_objects) -> (list, list):
-        filtered_sent_metrics = copy.deepcopy(sent_metrics_for_service)
-        filtered_metric_to_object = copy.deepcopy(metric_to_objects)
+        filtered_sent_metrics = copy.copy(sent_metrics_for_service)
         for metric in sent_metrics_for_service:
             if metric_to_objects.get(metric):
                 for dashboard in metric_to_objects[metric]:
                     self._logger.debug(
                         f"Found exact match for metric: {metric} in dashboard {dashboard}")
                     self.add_to_report(dashboard, __name__, self.create_report_object(metric))
-                del filtered_metric_to_object[metric]
+                del metric_to_objects[metric]
                 filtered_sent_metrics.remove(metric)
-        return filtered_sent_metrics, filtered_metric_to_object
+        return filtered_sent_metrics, metric_to_objects
 
     def process(self, metric_to_objects):
         service_to_metrics = self.group_tuples_by_service(metric_to_objects)
@@ -78,9 +101,7 @@ class FindMetricsNamesProcessor(Processor):
         return metric_to_objects
 
     # Metric sent contains the same characters as the metric in the dashboard, but in a different order
-    # Metric sent contains the same characters as the metric in the dashboard, but in a different order
     def permutation_replace(self, sent_metrics, current_dashboards_metrics, metric_to_objects) -> (list, list):
-        filtered_metric_to_objects = copy.deepcopy(metric_to_objects)
         filtered_dashboard_metrics = copy.deepcopy(current_dashboards_metrics)
         filtered_sent_metrics = sent_metrics.copy()
 
@@ -88,22 +109,23 @@ class FindMetricsNamesProcessor(Processor):
             for sent_metric in sent_metrics:
                 if len(sent_metric) == len(dashboard_metric):
                     if Counter(sent_metric) == Counter(dashboard_metric):
-                        self.replace_metric(dashboard_metric, sent_metric,
-                                            filtered_metric_to_objects[dashboard_metric])
+                        dashboards_to_remove = self.replace_metric(dashboard_metric, sent_metric,
+                                                                   metric_to_objects[dashboard_metric])
                         for dashboard in metric_to_objects[dashboard_metric].keys():
                             self.add_to_report(dashboard, __name__,
                                                self.create_report_object(
                                                    dashboard_metric, sent_metric)
                                                )
+                        self.remove_updated_dashboards_from_metric_to_object(dashboards_to_remove,
+                                                                             metric_to_objects[dashboard_metric])
                         filtered_sent_metrics.remove(sent_metric)
                         filtered_dashboard_metrics.remove(dashboard_metric)
         current_dashboards_metrics = filtered_dashboard_metrics
-        return filtered_sent_metrics, filtered_metric_to_objects
+        return filtered_sent_metrics, metric_to_objects
 
     def statistic_combination_replace(self, all_sent_metrics, all_dashboards_metrics, metric_to_objects) -> (
             list, list):
         filtered_sent_metrics = all_sent_metrics.copy()
-        filtered_metric_to_objects = copy.deepcopy(metric_to_objects)
         for sent_metric in all_sent_metrics:
             combinations = []
             max_match = ('', '', [], 0, 0)  # new metric, old_metric, match name, filter percent, match percent
@@ -123,19 +145,23 @@ class FindMetricsNamesProcessor(Processor):
                             max_match = (
                                 sent_metric, dashboard_metric, top_ranked_match[0], filter_ratio, top_ranked_match[1])
             if max_match[self.MAX_MATCH_MATCH_PERCENT] > 0:  # new metric was found
-                self.replace_and_report_new_match(filtered_metric_to_objects,
-                                                  max_match, metric_to_objects, all_dashboards_metrics)
-        return filtered_sent_metrics, filtered_metric_to_objects
+                self.replace_and_report_new_match(max_match, metric_to_objects, all_dashboards_metrics)
+                filtered_sent_metrics.remove(sent_metric)
+        return filtered_sent_metrics, metric_to_objects
 
-    def replace_and_report_new_match(self, filtered_metric_to_objects, max_match, metric_to_objects,
+    def replace_and_report_new_match(self, max_match, metric_to_objects,
                                      all_dashboard_metrics):
+        dashboards_to_remove = []
         for dashboard in metric_to_objects[max_match[self.MAX_MATCH_OLD_METRIC]]:
-            self.replace_metric(max_match[self.MAX_MATCH_OLD_METRIC], max_match[self.MAX_MATCH_NEW_METRIC],
-                                filtered_metric_to_objects[max_match[self.MAX_MATCH_OLD_METRIC]])
+            dashboards_to_remove = self.replace_metric(max_match[self.MAX_MATCH_OLD_METRIC],
+                                                       max_match[self.MAX_MATCH_NEW_METRIC],
+                                                       metric_to_objects[max_match[self.MAX_MATCH_OLD_METRIC]])
             self.add_to_report(dashboard, __name__, self.create_report_object(
                 max_match[self.MAX_MATCH_OLD_METRIC], max_match[self.MAX_MATCH_NEW_METRIC],
                 max_match[self.MAX_MATCH_FILTER_PERCENT], max_match[self.MAX_MATCH_MATCH_PERCENT],
                 max_match[self.MAX_MATCH_COMBINATIONS]))
+        self.remove_updated_dashboards_from_metric_to_object(dashboards_to_remove,
+                                                             metric_to_objects[max_match[self.MAX_MATCH_OLD_METRIC]])
         all_dashboard_metrics.remove(max_match[self.MAX_MATCH_OLD_METRIC])
 
     def get_sent_metrics_for_service(self, service_prefix) -> list:
@@ -146,12 +172,19 @@ class FindMetricsNamesProcessor(Processor):
             safe='*') + "&start=" + str(
             calendar.timegm(five_min_time.timetuple())) + "&end=" + str(
             calendar.timegm(epoch_time.timetuple()))
-        response = requests.get(query, headers=self._metrics_db_header)
+
+        if self._metrics_oauth_header:
+            response = requests.get(query, headers=self._metrics_oauth_header)
+        elif self._metrics_basic_auth_username:
+            response = requests.get(query, auth=(self._metrics_basic_auth_username, self._metrics_basic_auth_password))
+        else:
+            response = requests.get(query)
+
         metrics = []
         if response.status_code == 200:
             metrics = json.loads(response.content).get('data')
         else:
-            self._logger.error(f"Encountered an error while fetching metrics from db: {json.loads(response.content)}")
+            self._logger.error(f"Encountered an error {response.status_code} while fetching metrics from db: {response.content}")
         return metrics
 
     def order_repalce_strategies(self, strategies):

@@ -3,14 +3,14 @@ import logging
 import time
 import yaml
 
-from converter.influxql_to_m3_dashboard_converter import InfluxQLToM3DashboardConverter, ConvertError
+from converter.influxql_to_promql_dashboard_converter import InfluxQLToM3DashboardConverter, ConvertError
 
 logger = logging.getLogger(__name__)
 
 
 def get_log_level_descriptor(log_level) -> int:
     if log_level:
-        return getattr(logging, log_level)
+        return getattr(logging, log_level.upper())
     return logging.INFO
 
 

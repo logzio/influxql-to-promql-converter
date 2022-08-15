@@ -12,18 +12,18 @@ class Processor(Module):
     def process(self, metric_and_object: list[()]) -> list[()]:
         pass
 
-    def replace_metric(self, old_metric, new_metric, dashboard_to_panels):
+    # Returns list of dashboard-->panels object to be remove from metric to object (Already updated)
+    def replace_metric(self, old_metric, new_metric, dashboard_to_panels) -> list:
         dashboards = []
-        if len(dashboard_to_panels) > 0:
-            for dashboard, panels in dashboard_to_panels.items():
-                for panel in panels:
+        for dashboard, panels in dashboard_to_panels.items():
+            for panel in panels:
+                if panel.get('expr'):
                     panel['expr'] = panel['expr'].replace(old_metric, new_metric)
-                    self._logger.debug(f'Replaced metrics: {old_metric} ---> {new_metric} in dashboard {dashboard}')
-                dashboards.append(dashboard)
-            for dashboard in dashboards:
-                del dashboard_to_panels[dashboard]
-        if len(dashboards) == 0:
-            del dashboards
+                elif panel.get('query'): # Metric name is in label_values
+                    panel['query'] = panel['query'].replace(old_metric, new_metric)
+            self._logger.debug(f'Replaced metrics: {old_metric} ---> {new_metric} in dashboard {dashboard}')
+            dashboards.append(dashboard)
+        return dashboards
 
     def add_to_report(self, dashboard_name, module_name, report_object):
         short_module_name = module_name.split('.')[len(module_name.split('.')) - 1]
@@ -41,3 +41,8 @@ class Processor(Module):
 
     def get_json_report(self) -> dict:
         return self._json_report
+
+    # Remove (dashboard->panels) from list of dashboards for a specific metric.
+    def remove_updated_dashboards_from_metric_to_object(self, dashboards, all_metric_dashboards):
+        for dashboard in dashboards:
+            del all_metric_dashboards[dashboard]

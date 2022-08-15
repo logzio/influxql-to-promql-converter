@@ -112,6 +112,10 @@ class InfluxQLToM3DashboardConverter:
         self.metric_to_objects = {}  # dict of: metric -> {panel,dashboard title} to avoid iterating over all panels
         self.current_dashboard = ''
         self.replacement_datasource = replacement_datasource
+        # (Flag, metric and parent json of label_values string) object  to determine if the metric in the label_values requires replacement. i.e:
+        # label_values(net,host) ---> label_values(net__bytes_recv,host). Any metric with the same service
+        # is acceptable.
+        self._get_rep_metric = (False, None, None)
 
     def get_metric_field_from_select(self, select):
         field = None
@@ -195,9 +199,11 @@ class InfluxQLToM3DashboardConverter:
 
                 groupdict = m.groupdict()
                 metric = groupdict.get("tag")
+
                 key = groupdict["key"]
                 service_type = groupdict.get("service_type")
                 interval = groupdict.get("interval")
+
                 if key in ("host", "service_id") and service_type and interval and metric:
                     new_query = (
                         f'query_result(avg by({key})(avg_over_time({metric}{{service_type="{service_type}"}}[{interval}])))'
@@ -208,6 +214,8 @@ class InfluxQLToM3DashboardConverter:
                 else:
                     new_query = f"label_values({key})"
                 item["query"] = new_query.replace("cpu", "cpu_usage_idle")
+                if metric and not metric.__contains__('_'):
+                    self._get_rep_metric = (True, metric, item)
             elif item["type"] in {"custom", "interval", "datasource"}:
                 pass
             else:
@@ -796,5 +804,20 @@ class InfluxQLToM3DashboardConverter:
         for row in dashboard.get("rows", []):
             # TBD does this even exist? modern Grafana seems to have just toplevel list of "panels"
             self.convert_panels(row["panels"])
+        if self._get_rep_metric[0]:
+            self._update_label_values_metric()
+
         LOG.info(f'Finished dashboard conversion for: {dashboard.get("title")}')
         return dashboard
+
+    # Update label values query
+    # If a service name is in label_values query, we want to find any metric with the same service to replace it.
+    # (Unlike Influxql, Promql cannot query on services)
+    def _update_label_values_metric(self):
+        label_values = self._get_rep_metric[2]
+        for metric in self.metric_to_objects.keys():
+            if metric.split('_')[0] == self._get_rep_metric[1]:
+                label_values['query'] = label_values['query'].replace(self._get_rep_metric[1], metric)
+                self.metric_to_objects[metric][self.current_dashboard].append(label_values)
+                self._get_rep_metric = (False, None, None)
+                break

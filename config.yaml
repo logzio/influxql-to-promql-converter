@@ -1,29 +1,33 @@
-
+log_level: # optional default is INFO
 datasource:
 importer:
   grafana:
     endpoint:
     api_token:
   folder:
-    path:
+    path:  # relative or full path
 processor:
   replace_metrics_names:
-    - name:
-      value:
+    - name: # metric to be replaced
+      value: # new metric name
   find_metrics_names:
-    metrics_db_endpoint:
-    metrics_db_header:
-      key:
-      value:
+    metrics_auth: # Currently only m3db is supported
+      metrics_db_endpoint: # Path to base API i.e: localhost:9090/api/v1
+      metrics_basic_auth:
+        username:
+        password:
+      metrics_oauth_header:
+        key:
+        value:
     replace_strategy:
-      strategies: [ 'statistic_combination' , 'permutation' ]
-      min_match_percent:  # min percent for combination result match
-      min_filter_percent:  # begin matching combinations only if initial match percent is above this value
+      strategies: [ 'statistic_combination' , 'permutation' ] # optional
+      min_match_percent:  # min percent for result match 1-100
+      min_filter_percent:  # threshold for combination matching 1-100
 exporter:
   grafana:
-    endpoint:
+    endpoint: # grafana api url i.e: https://<<username>>.grafana.net
     auth_header:
       key:
       value:
   folder:
-    path:
+    path: # relative or full path

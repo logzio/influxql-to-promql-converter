@@ -42,10 +42,14 @@ processor:
     - name: # metric to be replaced
       value: # new metric name
   find_metrics_names:
-    metrics_db_endpoint: # currently only m3db is supported     
-    metrics_db_header:
-      key: 
-      value: 
+    metrics_auth: # Currently only prometheus is supported
+      metrics_db_endpoint: 
+      metrics_basic_auth: 
+        username:
+        password:
+      metrics_oauth_header:
+        key:
+        value:
     replace_strategy:
       strategies: [ 'statistic_combination' , 'permutation' ] # optional
       min_match_percent:  # min percent for result match 1-100
@@ -76,10 +80,11 @@ processor:
     - name: mem_used
       value: system_memory_usage
   find_metrics_names:
-    metrics_db_endpoint: https://api-eu.logz.io/v1/metrics/prometheus/api/v1
-    metrics_db_header:
-      key: X-API-TOKEN
-      value: <<logzio_m3db_prometheus_api_key>>
+    metrics_auth: # Currently only prometheus is supported
+      metrics_db_endpoint: https://api-eu.logz.io/v1/metrics/prometheus/api/v1
+      metrics_oauth_header:
+        key: X-API-TOKEN
+        value: <<logzio_prometheus_api_key>>
     replace_strategy:
       strategies: [ 'statistic_combination' , 'permutation' ]
       min_match_percent: 85 
@@ -111,9 +116,11 @@ exporter:
 | processor.replace_metrics_names.name | **Required**. The name of the original metric to be replaced |
 | processor.replace_metrics_names.value | **Required**. The new metric name |
 | processor.find_metrics_names | **Optional**. Processor to find a match between existing and available metrics |
-| processor.find_metrics_names.metrics_db_endpoint | **Required**. API endpoint of the metrics db. Currently only m3db is supported. |
-| processor.find_metrics_names.metrics_db_endpoint.metrics_db_header.key | **Required**. Metrics db header key to be used when querying the db API. Must be a full header key |
-| processor.find_metrics_names.metrics_db_endpoint.metrics_db_header.value | **Required**. Metrics db header value to be used when querying the db API. Must be a full header value, including token |
+| processor.find_metrics_names.metrics_auth.metrics_db_endpoint | **Required**. API endpoint of the metrics db. Currently only prometheus is supported. |
+| processor.find_metrics_names.metrics_auth.metrics_basic_auth.username | **Optional**. Metrics db username to be used when querying the db API. |
+| processor.find_metrics_names.metrics_auth.metrics_basic_auth.password | **Optional**. Metrics db password to be used when querying the db API. |
+| processor.find_metrics_names.metrics_auth.metrics_oauth_header.key | **Optional**. Metrics db oauth header key to be used when querying the db API. Must be a full header key |
+| processor.find_metrics_names.metrics_auth.metrics_oauth_header.value | **Optional**. Metrics db oauth header value to be used when querying the db API. Must be a full header value, including token |
 | processor.find_metrics_names.replace_strategy.strategies | **Required**. Strategies to be used in the processor. Available strategies: permutation,statistic_match |
 | processor.find_metrics_names.replace_strategy.min_match_percent | **Required** (for statistic_match strategy). The percent threshold for considering a match between two metrics. |
 | processor.find_metrics_names.replace_strategy.min_filter_percent | **Required** (for statistic_match strategy). The percent threshold for performing combination match between two metrics. |
@@ -147,6 +154,11 @@ All product and service names used in this page are for identification purposes 
 
 Changelog
 ==========
+
+v0.0.3:
+* Added conversion of label_values service to metric name.
+* Added support for prometheus basic auth
+* Fixed a bug where metric names were not replaced in dashboards.
 
 v0.0.2:
 * Fixed a bug in find metrics names processor (permutation replace strategy).
