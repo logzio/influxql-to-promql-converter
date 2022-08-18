@@ -1,0 +1,23 @@
+log_level: debug
+datasource: Prod Env Metrics
+importer:
+ grafana:
+   endpoint: https://myusername.grafana.net
+   api_token: <<grafana_api_token>>
+processor:
+  find_metrics_names:
+    metrics_auth:
+      metrics_db_endpoint: https://api.logz.io/v1/metrics/prometheus/api/v1 # for regions other than the US, use api-<<region>>.logz.io
+      metrics_oauth_header:
+        key: X-API-TOKEN
+        value: <<Logzio Prometheus metrics API token>>
+    replace_strategy:
+      strategies: [ 'statistic_combination','permutation' ]
+      min_match_percent: 95
+      min_filter_percent: 95
+exporter:
+  grafana:
+    endpoint: https://api.logz.io/v1/grafana/api # for regions other than the US, use api-<<region>>.logz.io
+    auth_header:
+      key: X-API-TOKEN
+      value: <<Logzio grafana API token>>

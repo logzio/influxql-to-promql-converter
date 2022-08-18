@@ -1,0 +1,23 @@
+importer:
+ grafana:
+   endpoint: https://myusername.grafana.net
+   api_token: <<grafana_api_token>>
+processor:
+ find_metrics_names:
+   metrics_auth:
+   	metrics_db_endpoint: http://localhost:9090/api/v1
+   	metrics_basic_auth:
+       username: <<prometheus_basic_auth_username>>
+       password: <<prometheus_basic_auth_password>>
+   replace_strategy:
+     strategies: ['statistic_combination' , 'permutation']
+     min_match_percent: 95
+     min_filter_percent: 92
+exporter:
+ grafana:
+   endpoint: http://localhost:3000/api
+   auth_header:
+     key: Authorization
+     value: Bearer <<grafana API token>>
+ folder:
+   path: converted_dashboards
