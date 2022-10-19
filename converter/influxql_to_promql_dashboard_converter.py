@@ -11,6 +11,7 @@ OVER_TIME_AGGREGATIONS = ["avg", "min", "max", "sum", "quantile", "stddev", "std
 LABEL_COMPARISON_OPERATORS = ["=", "!=", "=~", "!~"]
 LABEL_CONDITIONS_OPERATORS = ["<", ">", "<=", ">=", "="]
 TIME_INTERVAL_REGEX = "[0-9]+[mhdwy][s]?"  # Match time(<<interval>>)
+INVALID_PROMQL_METRIC_CHARACTERS = [".", "-"]
 
 AGGREGATION_MAP = {
     "count": "count",
@@ -125,11 +126,17 @@ class InfluxQLToM3DashboardConverter:
                 break
         return field
 
+    def _replace_invalid_metric_characters(self, metric) -> str:
+        for character in INVALID_PROMQL_METRIC_CHARACTERS:
+            metric = metric.replace(character, "_")
+        return metric
+
     def add_to_metric_and_object_list(self, old_targets, new_targets):
         for i, old_target in enumerate(old_targets):
             metric_name = old_target['measurement'] + "_"
-            # replace . with _ is a specific use case for customized metric names with . instead of _
-            metric_name += self.get_metric_field_from_select(old_target['select']).replace(".", "_")
+            # replace . and - with _ for the metric names. (promql valid metric name contains _ only)
+            metric_name += self.get_metric_field_from_select(old_target['select'])
+            metric_name = self._replace_invalid_metric_characters(metric_name)
             try:
                 self.metric_to_objects[metric_name][self.current_dashboard].append(new_targets[i])
             except KeyError:
@@ -169,7 +176,6 @@ class InfluxQLToM3DashboardConverter:
         alert["notifications"] = notifications
 
     def convert_templating(self, template: dict) -> None:
-
         for item in template["list"]:
             if item["type"] == "query":
                 if self.replacement_datasource:
@@ -185,10 +191,11 @@ class InfluxQLToM3DashboardConverter:
                 # Uncommon case where they query is a dict
                 if isinstance(query, dict) and query.get('query'):
                     query = query['query']
-                pattern = r"show tag values from (?P<tag>.+?) with key = ['|\"](?P<key>.+?)['|\"]( where service_type\s?=\s?['|\"](?P<service_type>.+?)['|\"] and time > now\(\) - (?P<interval>.+?$))?"
+                query = self._replace_invalid_metric_characters(query)
+                pattern = r"show tag values from (?P<tag>.+?) with key\s?=\s?['|\"](?P<key>.+?)['|\"]( where service_type\s?=\s?['|\"](?P<service_type>.+?)['|\"] and time > now\(\) - (?P<interval>.+?$))?"
                 m = re.search(pattern, query)
                 if m is None:
-                    pattern = r"SHOW TAG VALUES FROM ['|\"]?(?P<tag>.+?)['|\"]? WITH KEY = ['|\"](?P<key>.+?)['|\"]"
+                    pattern = r"SHOW TAG VALUES FROM ['|\"]?(?P<tag>.+?)['|\"]? WITH KEY\s?=\s?['|\"](?P<key>.+?)['|\"]"
                     m = re.search(pattern, query)
                 if m is None:
                     # check dashboard for alternative definition
@@ -214,7 +221,7 @@ class InfluxQLToM3DashboardConverter:
                 else:
                     new_query = f"label_values({key})"
                 item["query"] = new_query.replace("cpu", "cpu_usage_idle")
-                if metric and not metric.__contains__('_'):
+                if metric and len(metric.split("_")) < 3:
                     self._get_rep_metric = (True, metric, item)
             elif item["type"] in {"custom", "interval", "datasource"}:
                 pass
@@ -235,7 +242,7 @@ class InfluxQLToM3DashboardConverter:
         if not isinstance(conditions, list):
             conditions = [conditions]
 
-        metric_name = metric_name.replace(".", "_").replace("-", "_")  # Invalid characters for m3 / prometheus
+        metric_name = self._replace_invalid_metric_characters(metric_name)
         expressions = []
         over_times = []
         for condition in conditions:
@@ -276,7 +283,7 @@ class InfluxQLToM3DashboardConverter:
                     if not condition:  # count works better than sum if count_over_time is omitted
                         aggregation = AGGREGATION_TOPLEVEL_MAP.get(aggregation, aggregation)
                     if not over_time:  # discard aggregation from group by when over time function is used
-                        expr += "{}{}".format(aggregation, group_by.group_by)
+                        expr += "{}{}".format(aggregation, self._replace_invalid_metric_characters(group_by.group_by))
                 else:
                     expr += aggregation
             if condition and set(aggregations).difference({"avg", "max", "min"}):
@@ -325,6 +332,7 @@ class InfluxQLToM3DashboardConverter:
         return " or ".join(expressions), over_times, fills
 
     def get_metric_name(self, query: str) -> Tuple[str, str]:
+        # udpated_query = query.replace("-", "_")
         part1 = re.search(r'from "(\S+)" where', query, re.IGNORECASE)
         if part1 is None:
             raise ValueError(f"Unable to find metric name in {query}")
@@ -378,7 +386,7 @@ class InfluxQLToM3DashboardConverter:
                 # string.
                 regex = r'(\w+?|"\S+?")\s*{}\s*/(.*?)(?<!\\)(?:\\{{2}})*/'.format(operator)
                 for (key, value) in re.findall(regex, query):
-                    key = key.lstrip('"').rstrip('"')
+                    key = key.lstrip('"').rstrip('"').replace('-', "_")
                     if key == field_name:
                         continue
                     # InfluxQL regexes are search-like (match anywhere) while Prometheus does exact
@@ -731,6 +739,8 @@ class InfluxQLToM3DashboardConverter:
         r_fills = []
         for target in targets:
             legend = self.get_legend_format(target)
+            if legend:
+                legend = self._replace_invalid_metric_characters(legend)  # replace to promql standard
             if target.get("rawQuery"):  # Some panels use raw query instead
                 query = target["query"].replace("\n", " ")
                 query = re.sub("  +", " ", query)
@@ -816,8 +826,10 @@ class InfluxQLToM3DashboardConverter:
     def _update_label_values_metric(self):
         label_values = self._get_rep_metric[2]
         for metric in self.metric_to_objects.keys():
-            if metric.split('_')[0] == self._get_rep_metric[1]:
-                label_values['query'] = label_values['query'].replace(self._get_rep_metric[1], metric)
+            splitted_metric = metric.split('_', maxsplit=2)
+            label_service = self._get_rep_metric[1]
+            if splitted_metric[0] == label_service or splitted_metric[0] + "_" + splitted_metric[1] == label_service:
+                label_values['query'] = label_values['query'].replace(label_service, metric)
                 self.metric_to_objects[metric][self.current_dashboard].append(label_values)
                 self._get_rep_metric = (False, None, None)
                 break

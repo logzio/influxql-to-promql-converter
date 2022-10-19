@@ -155,6 +155,9 @@ All product and service names used in this page are for identification purposes 
 Changelog
 ==========
 
+v0.0.4:
+* Added renaming of invalid promql metric characters.
+
 v0.0.3:
 * Added conversion of label_values service to metric name.
 * Added support for prometheus basic auth
