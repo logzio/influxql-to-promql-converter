@@ -69,6 +69,8 @@ def _duration_to_seconds(v: str) -> int:
         return int(v[:-1]) * 60
     if v.endswith("h"):
         return int(v[:-1]) * 3600
+    if v.endswith("d"):
+        return int(v[:-1]) * 86400
     raise NotImplementedError(f"unknown duration {v}")
 
 
