@@ -155,6 +155,10 @@ All product and service names used in this page are for identification purposes 
 Changelog
 ==========
 
+v0.0.5:
+* Replaced dependency: `fuzzywuzzy` with `thefuzz`.
+* Updated `requests` version from `2.26.0` to `2.31.0`. 
+
 v0.0.4:
 * Added renaming of invalid promql metric characters.
 

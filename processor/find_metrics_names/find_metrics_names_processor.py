@@ -9,8 +9,8 @@ import requests
 
 from ..processor import Processor
 from collections import Counter
-from fuzzywuzzy import fuzz
-from fuzzywuzzy import process
+from thefuzz import fuzz
+from thefuzz import process
 import urllib.parse
 
 
