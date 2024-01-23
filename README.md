@@ -154,6 +154,8 @@ All product and service names used in this page are for identification purposes 
 
 Changelog
 ==========
+v0.0.6:
+* Updated `thefuzz` version from `0.20.0` to `0.22.1`. 
 
 v0.0.5:
 * Replaced dependency: `fuzzywuzzy` with `thefuzz`.
