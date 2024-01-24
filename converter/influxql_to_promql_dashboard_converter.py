@@ -201,8 +201,7 @@ class InfluxQLToM3DashboardConverter:
                     m = re.search(pattern, query)
                 if m is None:
                     # check dashboard for alternative definition
-                    pattern = r"SHOW TAG VALUES WITH KEY\s?=\s?['|\"](?P<key>.*?)['|\"]"
-                    m = re.search(pattern, query)
+                    m = self.extract_key_all_case(query)
                 if m is None:
                     raise ValueError(f"Unable to find tag values or key from {query!r}")
 
@@ -229,6 +228,14 @@ class InfluxQLToM3DashboardConverter:
                 pass
             else:
                 raise ValueError(f"Unknown template type for item {item}")
+
+    def extract_key_all_case(self, query):
+        pattern = r"SHOW TAG VALUES WITH KEY\s?=\s?['|\"](?P<key>.*?)['|\"]"
+        m = re.search(pattern, query)
+        if not m:
+            pattern = r"show tag values with key\s?=\s?['|\"](?P<key>.*?)['|\"]"
+            m = re.search(pattern, query)
+        return m
 
     def format_expression(
             self,

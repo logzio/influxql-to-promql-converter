@@ -154,6 +154,9 @@ All product and service names used in this page are for identification purposes 
 
 Changelog
 ==========
+v0.0.7:
+* Added handling for lowercase query. 
+
 v0.0.6:
 * Updated `thefuzz` version from `0.20.0` to `0.22.1`. 
 
